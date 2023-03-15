@@ -8,7 +8,7 @@
 | 属性值同uvc84，支持光圈 | 高通camera，参数属性走系统层 | uvc camera，所有数据通信走usbcom通道 | uvc86 的设置同uvc84，走usbcom hid节点，但是参数值同高通的参数配置，与高通内置camera参数效果相同 | 相当于辅流，不需要支持ptz、参数，但是有单独的一个名字 |
 
 ## camera 内部通信分析
-![image](F:\file\camera.png)
+![image](camera.png)
 
 ## 模块存在的问题分析
 ##### 问题1
@@ -105,5 +105,4 @@ camerad的第一个版本是由AX0 V22的代码集成的，针对的是IWB 内�
 
 ## 模块优化路线
 ##### 1 去掉多余原始代码
-
 
