@@ -1,6 +1,8 @@
 # camera
 ## 背景
-从去年开始进入camera的维护开始，改了很多的问题，就算改了很多，但是还有很多源源不断的问题冒出来。刚开始接触就是
+从去年开始进入camera的维护开始，改了很多的问题，就算改了很多，但是还有很多源源不断的问题冒出来。期间有去试着调整，但是由于代码交叉，调整比较麻烦，因为工作量得问题，每次改问题都是以兼容处理。
+AX0 多模前的版本印象最深的就是智能模式，一直在修修补补，因为机型的差异，只要修改一下代码很容易就会引入问题。
+整个camerad从去年到现在，内部代码还没有优化过，有很多无用的代码，且原来的代码框架并不是适合多camera，目前camera种类较多，原来的代码原型新增其它camera代价较大。整个历程，bug数量是比较多的，很多bug改的很快，主要原因我太菜了，改了这个问题忘记了其它的问题。
 
 ## 摄像头种类
 | cam6x、cam12x | 高通内置camera（AX0\IWB\A10） |  uvc84 |  高通外置UVC86  | 第三方摄像头  |
@@ -8,6 +10,16 @@
 | 属性值同uvc84，支持光圈 | 高通camera，参数属性走系统层 | uvc camera，所有数据通信走usbcom通道 | uvc86 的设置同uvc84，走usbcom hid节点，但是参数值同高通的参数配置，与高通内置camera参数效果相同 | 相当于辅流，不需要支持ptz、参数，但是有单独的一个名字 |
 
 ## camera 内部通信分析
+| |CAM6\12X | 高通内置AX0\IWB\A10 | UVC84 | 高通外置UVC86 | 第三方 |
+|--- |--- |--- |--- |--- |--- |
+| 参数设置 | USBCOM | Android属性 | USBCOM | USBCOM | 无 |
+| 智能模式设置 | 杭分 | 杭分、Android属性 | USBCOM<br>SG:杭分、mediacamera | USBCOM<br>SG:杭分、mediacamera  | 无 |
+| 参数保存 | 主机配置、开机加载 | 主机配置 | uvccamera 配置 | uvccamera 配置 | 无 |
+| 智能模式保存 | 主机配置、开机加载 | 主机配置，同12X区分 | uvccamera 自身配置 | uvccamera 配置 | 无 |
+| ptz | USBCOM->ISP | ISP | USBCOM->ISP | USBCOM->ISP | 无 |
+- 预设位属于其它功能
+- mediacamera属于对接系统层，后面需要跟usbcom耦合起来用，也就是hid节点同video节点绑定，但是模块相对独立，所以不需要安排修改
+##### 结构图如下
 ![image](camera.png)
 
 ## 模块存在的问题分析
@@ -104,5 +116,35 @@ startmove，功能：控制镜头上下左右，camera ptz 必备的接口。目
 camerad的第一个版本是由AX0 V22的代码集成的，针对的是IWB 内置和CAM6X，当时是属于快速集成cam6x的功能，并没有做什么设计，这样就导致cam6x做了很多的兼容（因为他是比较特殊的一个camera）。开发到现在，AX0、M500之类的
 
 ## 模块优化路线
+针对这些场景，目标是将各种camera的使用设计为低耦合。
 ##### 1 去掉多余原始代码
 
+##### 2 camera图像参数、智能模式参数调整
+针对以下几个场景做处理
++ 参数加载 -- 区分camera
++ 参数设置 -- 区分camera
++ 参数传输 -- 不区分camera
++ 参数缓存 -- 不区分camera
++ 参数存储 -- 区分camera
+1、参数加载
+内置camera可以做到统一，读取主机配置即可；
+uvccamera分两种，cam6x、其他uvc系列，6x读取自身那套配置，其他uvc读取设备上的
+2、参数设置
+内置走android属性
+uvc走usbcom
+```mermaid
+graph TD;
+  localcamera -- cache --> cameramanager
+  localcamera -- set --> android属性
+  localcamera -- cache --> self
+  localcamera -- save --> config
+```
+```mermaid
+graph TD;
+  uvccamera -- set --> usbcom
+  uvccamera -- cache --> cameramanager
+  uvccamera -- save --> config
+```
+3、参数存储
+记录在配置里面
+cam6x 单独一套配置存储，其他uvc存储在设备端
