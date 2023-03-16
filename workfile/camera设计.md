@@ -23,7 +23,7 @@ AX0 多模前的版本印象最深的就是智能模式，一直在修修补补�
 ![image](camera.png)
 
 ## 模块存在的问题分析
-### 问题1
+### 问题1 代码维护效率
 简单看一下一段代码
 ```c++
 bool CCameraClient::StartMove(const int nDirection, bool bSend)
@@ -89,11 +89,11 @@ bool CCameraClient::StartMove(const int nDirection, bool bSend)
 ```
 startmove，功能：控制镜头上下左右，camera ptz 必备的接口。目前这个接口里面区分了各种摄像头的控制方式，如果在需求不变的情况下，这样用也没啥问题，但是如果后期需要新增一个其它控制方式的camera，相当于每类这个接口都需要添加case，增加了代码的复杂度不说，主要的问题是这类接口比较多，很容易忽略掉某个接口。
 
-### 问题2
+### 问题2 ptz、参数控制差异
 内置camera目前自己搞了一套camera参数处理逻辑，完全是另外的一套，同外接camera ptz控制、参数控制、数据本地保存等完全分离，这样会让修改cam6x 这种既是外接又算内置的camera无法维护。之前内置的也分了两套控制逻辑，工作量更大。目前等海思去掉之后，内置控制只有一套逻辑。
 目前内置参数有两套存储地方，维护效果差，各种camera的参数差异导致经常出现bug；ptz控制优化后，由之前的2000多行，控制到了目前的600行，直接使用即可
 
-### 问题3
+### 问题3 智能模式
 当前同杭分通信分两块，一块以丁静为主，负责系统camera、mediacamera的处理，包括枚举、id创建；一块以王金鑫为主，主要为智能模式设置，智能模式主要对接wjx，同dj也有关联。最初AX0同杭分通信是针对智能模式和A30控制ptz的。因为智能模式没有约束，根据图像的需求想加就加，期间增加了比较多的通信方式，目前主要的内置camera智能模式只有一条通道，其他的都是辅助（Android变量、isp需要知道某个模式、86、84 SG 需要告知丁静）。
 存在的主要问题：同YRC对比，camera的智能模式YRC做的比较完美，只有两种语音追踪和自动框景，其他的都是这两种下面的子项，事实也是如此；但是AX0这边诞生出来了各种各样的只能模式，都是之前根据测试想要的效果直接就添加了，导致现在测试根据测试效果，变来变去（比如MF没有开放速度选项，就让固定一个速度，这个速度是代码写死的，随时可能变更）。表达这些是想说明这一块很乱，且目前86 的SG 走在了主机这边，需要通知杭分。
 ```c++
@@ -112,12 +112,40 @@ startmove，功能：控制镜头上下左右，camera ptz 必备的接口。目
 ```
 实际上就两种，变更出来了这么多种不应该存在的模式，以至于预设位都变成了智能模式
 
-### 问题4
-camerad的第一个版本是由AX0 V22的代码集成的，针对的是IWB 内置和CAM6X，当时是属于快速集成cam6x的功能，并没有做什么设计，这样就导致cam6x做了很多的兼容（因为他是比较特殊的一个camera）。开发到现在，AX0、M500之类的
+### 问题4 camera差异化
+camerad的第一个版本是由AX0 V22的代码集成的，针对的是IWB 内置和CAM6X，当时是属于快速集成cam6x的功能，并没有做什么设计，这样就导致cam6x做了很多的兼容（因为他是比较特殊的一个camera）。开发到现在，AX0、M500之类的因为cam6x引入了不少的问题。
+目前整个camera支持多摄了，就应该只有一套逻辑，多摄逻辑，有和没有的区别。这需要一个好的设计模式，维护camera列表，我这边的想法是参考byod。
+
+### 问题5 兼容性问题
+兼容性处理，之前处理代码时很少处理兼容性问题，想的都是按照不出问题的情况处理就行，没有考虑到旧版本升上来的异常。导致后面修改更加麻烦
 
 ## 模块优化路线
 针对这些场景，目标是将各种camera的使用设计为低耦合。
 ### 1 去掉多余原始代码
+1、整个云台控制逻辑删除
+2、去除cameradatamanager，外部数据用modcommonunits管理
+3、预设位只留有简单的添加、删除、替换、应用逻辑，其他的全部去除
+
+```mermaid
+graph TD;
+  cameramanager -- 数据结构维护 --> camerastructdefine数据结构
+  cameramanager -- camera连接管理 --> cameraclient
+  cameraclient -- 绑定系统camera --> mediacamera
+  mediacamera -- 绑定hid<br>video节点 --> usbcom
+  cameraclient -- uvccamera连接 --> usbcom
+  cameramanager -- ptz控制 --> cameraptz
+  cameramanager -- 参数控制 --> cameraparam
+  cameramanager -- 从机数据 --> cameraremote
+  cameramanager -- 预设位 --> camerapreset
+  cameraptz --> usbcom
+  cameraptz --> isp
+  cameraparam -- 智能模式参数 --> 杭分wjx
+  cameraparam -- 图像参数 --> isp
+  cameraparam -- 图像参数 --> usbcom
+  cameraparam -- 加载<br>储存 --> config
+  camerapreset -- 绝对位坐标控制 --> cameraptz
+  mediacamera -- 生成系统camera节点 --> 杭分dj
+```
 
 ### 2 camera图像参数、智能模式参数调整
 针对以下几个场景做处理
@@ -126,25 +154,43 @@ camerad的第一个版本是由AX0 V22的代码集成的，针对的是IWB 内�
 + 参数传输 -- 不区分camera
 + 参数缓存 -- 不区分camera
 + 参数存储 -- 区分camera
+
 1、参数加载
 内置camera可以做到统一，读取主机配置即可；
 uvccamera分两种，cam6x、其他uvc系列，6x读取自身那套配置，其他uvc读取设备上的
 2、参数设置
-内置走android属性
-uvc走usbcom
+内置：走android属性
+uvc：走usbcom
+根据当前提供给外部的设置方式 setParam，key-value 形式，原来的代码已经不适用了，可以用一个50个数据的map替换之前的各种模式参数
+
 ```mermaid
 graph TD;
-  localcamera -- cache --> cameramanager
+  localcamera -- cache map --> cameramanager1
   localcamera -- set --> android属性
   localcamera -- cache --> self
   localcamera -- save --> config
 ```
 ```mermaid
 graph TD;
-  uvccamera -- set --> usbcom
-  uvccamera -- cache --> cameramanager
+  uvccamera -- set --> usbcom1
+  uvccamera -- cache map --> cameramanager1
   uvccamera -- save --> config
 ```
 3、参数存储
 记录在配置里面
 cam6x 单独一套配置存储，其他uvc存储在设备端
+
+#### 以当前camera获取、设置流程举例
+流程图制作：https://www.processon.com/diagrams
+![image](cameraparam.png)
+
+### 3 ptz 逻辑分析
+旧的ptz接口很多，各种各种，典型的startmove、startzoom、moveto、zoomto、MoveToPtz、presetzoomto、presetmoveto、presetptz、ptzext等等各种指令。实际上有效的就只有startmove、startzoom、ptz三个接口。不管底下怎么区分摄像头，只有三个功能。
+
+### 4 智能模式整理
+跑在主机上的智能模式单独维护一套，已经没办法去解决了，只能单独拿出来维护，但是需要简化控制逻辑，不搞的那么复杂（兼容接口、配置两种设置方法）。
+
+## 目标
+![image](camera模块内部.png)
+
+为了方便后面的无限拓展，camera最终应该是要能支持添加标准camera，能够快速适配的。添加控制逻辑不同的camera也不会影响任何其它camera逻辑的
